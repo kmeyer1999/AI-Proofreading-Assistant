@@ -1,9 +1,10 @@
 "use client"
 
+import exifr from "exifr"
 import { useMemo, useState } from "react"
-import { Languages, Server, Search, ArrowRightLeft, Link, HistoryIcon, Lightbulb, Loader2, Image as ImageIcon, FileText } from "lucide-react"
+import { Languages, Server, Search, ArrowRightLeft, Link, HistoryIcon, Lightbulb, Loader2, Image as ImageIcon, FileText, X } from "lucide-react"
 import { useProofreading } from "@/hooks/use-proofreading"
-import { generateDiffMarkup, DiffItem, delay } from "@/lib/utils"
+import { generateDiffMarkup, DiffItem, delay, jsonRepairSafe } from "@/lib/utils"
 import { HistoryEntry } from "@/types/proofreading"
 import { Header } from "./proofreading/header"
 import { Footer } from "./proofreading/footer"
@@ -39,6 +40,24 @@ export function DiffAssistant() {
   const [imageDiffResult, setImageDiffResult] = useState<string | null>(null)
   const [imageComparisonLoading, setImageComparisonLoading] = useState(false)
   const [imageComparisonError, setImageComparisonError] = useState<string | null>(null)
+  const [leftMetadata, setLeftMetadata] = useState<any>(null)
+  const [rightMetadata, setRightMetadata] = useState<any>(null)
+  const [watchSource, setWatchSource] = useState(false)
+
+  const metadataFields = [
+    { key: 'Make', label: '品牌', format: (v: any) => v },
+    { key: 'Model', label: '型号', format: (v: any) => v },
+    { key: 'DateTimeOriginal', label: '拍摄时间', format: (v: any) => v ? new Date(v).toLocaleString() : '' },
+    { key: 'ModifyDate', label: '修改时间', format: (v: any) => v ? new Date(v).toLocaleString() : '' },
+    { key: 'ExifImageWidth', label: '分辨率', format: (v: any, meta: any) => meta?.ExifImageWidth && meta?.ExifImageHeight ? `${meta.ExifImageWidth} x ${meta.ExifImageHeight}` : '' },
+    { key: 'Orientation', label: '方向', format: (v: any) => v },
+    { key: 'Software', label: '软件', format: (v: any, meta: any) => v || meta?.CreatorTool || '' },
+  ]
+
+  const showMetadata = useMemo(() => {
+    const hasValue = (obj: any) => obj && Object.values(obj).length > 0
+    return activeTab === 'image' && (hasValue(leftMetadata) || hasValue(rightMetadata))
+  }, [leftMetadata, rightMetadata, activeTab])
 
   const disabled = useMemo(() => inputLeft.length === 0 || inputRight.length === 0, [inputLeft, inputRight])
   const analyze = useMemo(() => ({
@@ -109,20 +128,25 @@ export function DiffAssistant() {
   }
 
   // Handle image upload and preview
-  const handleImageUpload = (file: File, side: 'left' | 'right') => {
+  const handleImageUpload = async (file: File, side: 'left' | 'right') => {
     if (!file || !file.type.startsWith('image/')) {
       setImageComparisonError('Please select a valid image file')
       return
     }
     
     const previewUrl = URL.createObjectURL(file)
-    
+
+    let metadata = {}
+    try { metadata = await exifr.parse(file, { xmp: true, exif: true }) } catch (error) {}       
+
     if (side === 'left') {
       setImageLeft(file)
-      setImageLeftPreview(previewUrl)
+      setImageLeftPreview(previewUrl)      
+      setLeftMetadata(metadata)
     } else {
       setImageRight(file)
       setImageRightPreview(previewUrl)
+      setRightMetadata(metadata)
     }
     
     // Clear any previous diff result when a new image is uploaded
@@ -236,6 +260,8 @@ export function DiffAssistant() {
     setImageRightPreview(null)
     setImageDiffResult(null)
     setImageComparisonError(null)
+    setLeftMetadata(null)
+    setRightMetadata(null)
   }
 
   const onLoadImageExample = async () => {
@@ -268,7 +294,7 @@ export function DiffAssistant() {
     if (loading) return
     try {
       setLoading(true)
-      const response = await fetch('https://text.pollinations.ai/openai', {
+      const response = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -298,8 +324,8 @@ export function DiffAssistant() {
       })
 
       const data = await response.json()
-      const text = data.choices[0].message.content.replace(/^```json\s*|```$/g, "").trim()
-      const parsedText = JSON.parse(text)
+      const text = data.choices[0].message.content
+      const parsedText = jsonRepairSafe(text)
 
       setImageDiffResults(parsedText)
     } catch (error) {
@@ -460,6 +486,54 @@ export function DiffAssistant() {
                     比对图片
                   </Button>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Image Metadata Card */}
+        {showMetadata && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <ImageIcon className="h-5 w-5 text-primary" />图片元数据
+                </span>
+                <span className="text-xs text-muted-foreground cursor-pointer" onClick={() => setWatchSource(!watchSource)}>{watchSource ? '隐藏源代码' : '查看源代码'}</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {watchSource && <div className="flex items-start gap-4 max-h-[600px] overflow-y-auto mb-6">
+                <TextOutput diff={generateDiffMarkup(JSON.stringify(leftMetadata || {}, null, 4), JSON.stringify(rightMetadata || {}, null, 4))} />
+              </div>}
+
+              <div className="rounded-lg border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left p-3 font-medium text-muted-foreground w-1/4">属性</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground w-1/3">{imageLeft?.name}</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground w-1/3">{imageRight?.name}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {metadataFields.map(field => {
+                      const leftValue = leftMetadata?.[field.key]
+                      const rightValue = rightMetadata?.[field.key]
+                      const leftDisplay = field.format(leftValue, leftMetadata)
+                      const rightDisplay = field.format(rightValue, rightMetadata)
+                      const diff = leftValue !== rightValue
+                      
+                      return (leftDisplay || rightDisplay) && (
+                        <tr key={field.key} className={diff ? 'bg-red-50/50' : ''}>
+                          <td className="p-3 text-muted-foreground">{field.label}</td>
+                          <td className={`p-3 ${diff ? 'text-red-600 font-medium' : ''}`}>{leftDisplay}</td>
+                          <td className={`p-3 ${diff ? 'text-red-600 font-medium' : ''}`}>{rightDisplay}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
             </CardContent>
           </Card>

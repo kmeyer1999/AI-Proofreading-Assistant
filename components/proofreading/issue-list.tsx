@@ -2,7 +2,7 @@
 
 import type { Issue } from "@/types/proofreading"
 import { Badge } from "@/components/ui/badge"
-import { Check, X, Undo2, CheckCircle2, ArrowRight } from "lucide-react"
+import { Eye, Check, X, Undo2, CheckCircle2, ArrowRight } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
 interface IssueListProps {
@@ -10,6 +10,7 @@ interface IssueListProps {
   onAcceptSuggestion: (id: number) => void
   onIgnoreSuggestion: (id: number) => void
   onUnignoreSuggestion: (id: number) => void
+  onShowOriginalByIssueId: (id: number) => void
 }
 
 const CATEGORY_STYLES = {
@@ -19,7 +20,13 @@ const CATEGORY_STYLES = {
   表达优化: { bg: "bg-blue-500/10", text: "text-blue-500", border: "border-blue-500/20" },
 }
 
-export function IssueList({ issues, onAcceptSuggestion, onIgnoreSuggestion, onUnignoreSuggestion }: IssueListProps) {
+export function IssueList({ 
+  issues,
+  onAcceptSuggestion,
+  onIgnoreSuggestion,
+  onUnignoreSuggestion,
+  onShowOriginalByIssueId,
+}: IssueListProps) {
   const sortedIssues = [...issues].sort((a, b) => {
     if (a.start === 0 && a.end === 0) return 1
     if (b.start === 0 && b.end === 0) return -1
@@ -43,11 +50,12 @@ export function IssueList({ issues, onAcceptSuggestion, onIgnoreSuggestion, onUn
           return (
             <div
               key={issue.id}
-              className={`p-4 hover:bg-muted/50 transition-colors ${
+              data-issue-id={issue.id}
+              className={`p-4 hover:bg-muted/50 transition-colors cursor-pointer ${
                 issue.fixed ? "bg-green-500/5" : issue.ignored ? "bg-muted/30" : ""
               }`}
             >
-              <div className="flex items-start gap-3">
+              <div className="flex flex-col md:flex-row items-start gap-3">
                 <Badge variant="outline" className={`${style.bg} ${style.text} ${style.border} border w-[65px]`}>
                   {issue.ignored ? "已忽略" : issue.category}
                 </Badge>
@@ -58,14 +66,11 @@ export function IssueList({ issues, onAcceptSuggestion, onIgnoreSuggestion, onUn
                   >
                     {issue.reason}
                   </p>
-                  <div className="flex items-center gap-2 text-xs">
-                    <span
-                      className={`line-through ${issue.fixed || issue.ignored ? "text-muted-foreground" : "text-foreground/70"}`}
-                    >
+                  <div className="flex flex-col text-xs">
+                    <span className="font-medium text-green-500">{issue.suggestion}</span>
+                    <span className={`line-through ${issue.fixed || issue.ignored ? "text-muted-foreground" : "text-foreground/70"}`}>
                       {issue.original}
                     </span>
-                    <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                    <span className="font-medium text-green-500">{issue.suggestion}</span>
                   </div>
                 </div>
 
@@ -78,6 +83,9 @@ export function IssueList({ issues, onAcceptSuggestion, onIgnoreSuggestion, onUn
                     </Badge>
                   ) : (
                     <>
+                      <Badge variant="secondary" className="h-6" onClick={() => onShowOriginalByIssueId(issue.id)}>
+                        <Eye className="h-4 w-4" />
+                      </Badge>
                       <Badge variant="default" className="h-6" onClick={() => onAcceptSuggestion(issue.id)}>
                         <Check className="h-4 w-4" />
                       </Badge>
