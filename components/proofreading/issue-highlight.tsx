@@ -3,7 +3,10 @@
 import { useState, useEffect, useRef } from "react"
 import type { Issue, IssueCategory } from "@/types/proofreading"
 import { Badge } from "@/components/ui/badge"
-import { Languages, BookOpen, Search, ChevronLeft, ChevronRight, List, Check } from "lucide-react"
+import { Languages, BookOpen, Search, ChevronLeft, ChevronRight, List } from "lucide-react"
+import { TextOutput } from "../different/text-output"
+import { DiffItem, generateDiffMarkup, cn } from "@/lib/utils"
+
 import eventBus from "@/lib/eventBus"
 
 interface IssueHighlightProps {
@@ -24,54 +27,41 @@ export function IssueHighlight({
   onShowOriginalByIssueId,
 }: IssueHighlightProps) {
   const [segments, setSegments] = useState(() => {
-    if (issues.length === 0) {
-      return [{ type: "text" as const, content: inputText }]
-    }
+    if (issues.length === 0) return [{ type: "text" as const, content: inputText }]
 
-    const sortedIssues = [...issues].filter((issue) => issue.start || issue.end).sort((a, b) => a.start - b.start)
-    const result: Array<{ type: "text" | "highlight"; content: string; issue?: Issue }> = []
-    let lastIndex = 0
+    const sortedIssues = [...issues].filter(i => i.start || i.end).sort((a, b) => a.start - b.start)
+    const segments: Array<{ type: "text" | "highlight"; content: string; issue?: Issue }> = []
 
-    sortedIssues.forEach((issue) => {
-      if (issue.start > lastIndex) {
-        result.push({
-          type: "text",
-          content: inputText.substring(lastIndex, issue.start),
-        })
+    let cursor = 0
+    for (const issue of sortedIssues) {
+      if (issue.start > cursor) {
+        segments.push({ type: "text", content: inputText.substring(cursor, issue.start) })
       }
-      result.push({
-        type: "highlight",
-        content: inputText.substring(issue.start, issue.end),
-        issue,
-      })
-      lastIndex = issue.end
-    })
-
-    if (lastIndex < inputText.length) {
-      result.push({
-        type: "text",
-        content: inputText.substring(lastIndex),
-      })
+      segments.push({ type: "highlight", content: inputText.substring(issue.start, issue.end), issue })
+      cursor = issue.end
     }
 
-    return result
+    if (cursor < inputText.length) {
+      segments.push({ type: "text", content: inputText.substring(cursor) })
+    }
+
+    return segments
   })
 
+  const categoryClassMap = {
+    错别字: "highlight-error",
+    语法错误: "highlight-warning",
+    标点符号: "highlight-suggest",
+    表达优化: "highlight-info",
+  }
   const getHighlightClass = (issue: Issue) => {
     if (issue.fixed) return "highlight-fixed"
     if (issue.ignored) return "highlight-ignored"
-
+    
+    const baseClass = categoryClassMap[issue.category] || "highlight-info"
     const isActive = activeCategory === "all" || activeCategory === issue.category
-
-    const baseClass =
-      {
-        错别字: "highlight-error",
-        语法错误: "highlight-warning",
-        标点符号: "highlight-suggest",
-        表达优化: "highlight-info",
-      }[issue.category] || "highlight-info"
-
-    return `${baseClass} ${!isActive ? "opacity-30" : ""}`
+    
+    return cn(baseClass, { "opacity-30": !isActive })
   }
 
   const resultAreaRef = useRef<HTMLDivElement>(null)
@@ -112,7 +102,16 @@ export function IssueHighlight({
     setEditValue(issue.suggestion);
   };
 
- useEffect(() => {
+  const replaceDelContent = (diff: DiffItem[]) => diff.map(item => {
+    return { ...item, content: item.type !== 'del' ? item.content : ' ' }
+  })
+
+  const onAccept = (issue: Issue) => {    
+    const newIssue = { ...issue, suggestion: editingIssueId != null ? editValue : issue.suggestion }
+    onAcceptSuggestion(issue.id, newIssue)
+  }
+
+  useEffect(() => {
     const newSegments = segments.map((segment) => {
       if (segment.type === "text" || !segment.issue) return segment
 
@@ -171,34 +170,32 @@ export function IssueHighlight({
           const issue = segment.issue!
           return (
             <span id={`issue-${issue.id}`} key={index} className={`relative group cursor-pointer ${getHighlightClass(issue)}`}>
-              {issue.fixed ? segment.content : segment.content ? segment.issue?.original : segment.content}
-              {!issue.fixed && !issue.ignored && (
+              {issue.fixed ? segment.content : issue.original}
+              {issue.fixed === issue.ignored && (
                 <div className="suggestion-popup absolute bottom-full mb-2 left-0 hidden group-hover:block group-active:block z-10 min-w-[250px] max-w-[400px]">
                   <div className="bg-popover border border-border rounded-lg shadow-lg p-3">
-                    <div className="text-xs font-medium text-destructive mb-1">问题：{issue.reason}</div>
+                    <div className="text-xs font-medium text-destructive mb-1 leading-relaxed">{issue.reason}</div>
                       <div className="text-xs mb-2 space-y-2">
                         {editingIssueId === issue.id ? (
-                          <div className="space-y-2 relative">
-                            <textarea 
-                              value={editValue} 
-                              onChange={(e) => setEditValue(e.target.value)}
-                              className="w-full p-2 border border-border rounded-md text-xs resize-none"
-                              rows={3}
-                              autoFocus
-                            />
-                          </div>
+                          <textarea 
+                            value={editValue} 
+                            onChange={(e) => setEditValue(e.target.value)}
+                            className="w-full p-2 border border-border rounded-md text-xs resize-none"
+                            rows={3}
+                            autoFocus
+                          />
                         ) : (
                           <span 
-                            className="font-medium text-green-500 cursor-pointer hover:opacity-70" 
+                            className="cursor-pointer hover:opacity-70 text-xs" 
                             onClick={(e) => startEditSuggestion(issue, e)}
                             title="点击修改建议"
                           >
-                            建议：{issue.suggestion}
+                            <TextOutput className="min-h-[auto] leading-relaxed" diff={replaceDelContent(generateDiffMarkup(issue.suggestion, issue.original))} />
                           </span>
                         )}
                       </div>
                     <div className="flex items-center gap-2">
-                      <Badge className="h-6 text-xs" onClick={() => onAcceptSuggestion(issue.id, { ...issue, suggestion: editValue })}>
+                      <Badge className="h-6 text-xs" onClick={() => onAccept(issue)}>
                         采纳
                       </Badge>
                       <Badge className="h-6 text-xs" variant="secondary" onClick={() => onIgnoreSuggestion(issue.id)}>

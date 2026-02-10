@@ -1,13 +1,16 @@
 "use client"
 
+import { useState } from "react"
 import type { Issue } from "@/types/proofreading"
 import { Badge } from "@/components/ui/badge"
-import { Eye, Check, X, Undo2, CheckCircle2, ArrowRight } from "lucide-react"
+import { Eye, Check, X, Undo2, CheckCircle2, CornerRightDown } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { TextOutput } from "../different/text-output"
+import { DiffItem, generateDiffMarkup } from "@/lib/utils"
 
 interface IssueListProps {
   issues: Issue[]
-  onAcceptSuggestion: (id: number) => void
+  onAcceptSuggestion: (id: number, issue?: Issue) => void
   onIgnoreSuggestion: (id: number) => void
   onUnignoreSuggestion: (id: number) => void
   onShowOriginalByIssueId: (id: number) => void
@@ -32,6 +35,23 @@ export function IssueList({
     if (b.start === 0 && b.end === 0) return -1
     return a.start - b.start
   })
+
+  const [editValue, setEditValue] = useState("")
+  const [editingIssueId, setEditingIssueId] = useState<number | null>(null)
+  const replaceDelContent = (diff: DiffItem[]) => diff.map(item => {
+    return { ...item, content: item.type !== 'del' ? item.content : ' ' }
+  })
+
+  const startEditSuggestion = (issue: Issue, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditingIssueId(issue.id)
+    setEditValue(issue.suggestion)
+  }
+
+  const onAccept = (issue: Issue) => {    
+    const newIssue = { ...issue, suggestion: editingIssueId != null ? editValue : issue.suggestion }
+    onAcceptSuggestion(issue.id, newIssue)
+  }
 
   if (sortedIssues.length === 0) {
     return (
@@ -60,17 +80,22 @@ export function IssueList({
                   {issue.ignored ? "已忽略" : issue.category}
                 </Badge>
 
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 w-full">
                   <p
                     className={`text-sm mb-2 ${issue.fixed || issue.ignored ? "text-muted-foreground" : "text-destructive"}`}
                   >
                     {issue.reason}
                   </p>
-                  <div className="flex flex-col text-xs">
-                    <span className="font-medium text-green-500">{issue.suggestion}</span>
-                    <span className={`line-through ${issue.fixed || issue.ignored ? "text-muted-foreground" : "text-foreground/70"}`}>
+                  <div className="flex flex-col text-xs leading-relaxed">
+                    <p className="text-xs text-muted-foreground opacity-50 leading-relaxed">
                       {issue.original}
-                    </span>
+                      {editingIssueId === issue.id && <span title="修改原文" className="cursor-pointer ml-1" onClick={() => setEditValue(issue.original)}><CornerRightDown className="h-3 w-3 text-gray-400 hover:text-gray-600 inline" /></span>}
+                    </p>
+                    {issue.fixed && <span className="font-medium text-green-500">{issue.suggestion}</span>}
+                    {issue.fixed === issue.ignored ? editingIssueId === issue.id 
+                      ? <textarea value={editValue} onChange={(e) => setEditValue(e.target.value)} className="w-full p-2 border border-border rounded-md text-xs resize-none" rows={3} autoFocus /> 
+                      : <TextOutput className="min-h-[auto]" title="点击修改建议" diff={replaceDelContent(generateDiffMarkup(issue.suggestion, issue.original))} onClick={(e) => startEditSuggestion(issue, e)} /> : null
+                    }
                   </div>
                 </div>
 
@@ -83,14 +108,14 @@ export function IssueList({
                     </Badge>
                   ) : (
                     <>
-                      <Badge variant="secondary" className="h-6" onClick={() => onShowOriginalByIssueId(issue.id)}>
-                        <Eye className="h-4 w-4" />
-                      </Badge>
-                      <Badge variant="default" className="h-6" onClick={() => onAcceptSuggestion(issue.id)}>
+                      <Badge variant="default" className="h-6" onClick={() => onAccept(issue)}>
                         <Check className="h-4 w-4" />
                       </Badge>
                       <Badge variant="secondary" className="h-6" onClick={() => onIgnoreSuggestion(issue.id)}>
                         <X className="h-4 w-4" />
+                      </Badge>
+                      <Badge variant="secondary" className="h-6" onClick={() => onShowOriginalByIssueId(issue.id)}>
+                        <Eye className="h-4 w-4" />
                       </Badge>
                     </>
                   )}
